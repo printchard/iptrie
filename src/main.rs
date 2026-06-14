@@ -74,23 +74,7 @@ impl IpNode {
                 .allocate(ip, prefix_len, current_depth + 1)?;
         };
 
-        let left_full = self
-            .left
-            .as_ref()
-            .map_or(false, |n| n.status == AllocationStatus::Allocated);
-        let right_full = self
-            .right
-            .as_ref()
-            .map_or(false, |n| n.status == AllocationStatus::Allocated);
-
-        if left_full && right_full {
-            self.status = AllocationStatus::Allocated;
-            self.left = None;
-            self.right = None;
-        } else {
-            self.status = AllocationStatus::Partial;
-        }
-
+        self.coalesce();
         Ok(())
     }
 
@@ -133,23 +117,7 @@ impl IpNode {
             }
         }
 
-        let left_empty = self
-            .left
-            .as_ref()
-            .map_or(true, |n| n.status == AllocationStatus::Empty);
-        let right_empty = self
-            .right
-            .as_ref()
-            .map_or(true, |n| n.status == AllocationStatus::Empty);
-
-        if left_empty && right_empty {
-            self.status = AllocationStatus::Empty;
-            self.left = None;
-            self.right = None;
-        } else {
-            self.status = AllocationStatus::Partial;
-        }
-
+        self.coalesce();
         Ok(())
     }
 
@@ -173,6 +141,96 @@ impl IpNode {
                 node.is_available(ip, prefix_len, current_depth + 1)
             })
         }
+    }
+
+    fn coalesce(&mut self) {
+        let left_empty = self
+            .left
+            .as_ref()
+            .map_or(true, |n| n.status == AllocationStatus::Empty);
+        let right_empty = self
+            .right
+            .as_ref()
+            .map_or(true, |n| n.status == AllocationStatus::Empty);
+
+        if left_empty && right_empty {
+            self.status = AllocationStatus::Empty;
+            self.left = None;
+            self.right = None;
+            return;
+        }
+
+        let left_full = self
+            .left
+            .as_ref()
+            .map_or(false, |n| n.status == AllocationStatus::Allocated);
+        let right_full = self
+            .right
+            .as_ref()
+            .map_or(false, |n| n.status == AllocationStatus::Allocated);
+
+        if left_full && right_full {
+            self.status = AllocationStatus::Allocated;
+            self.left = None;
+            self.right = None;
+            return;
+        }
+
+        self.status = AllocationStatus::Partial;
+    }
+
+    fn allocate_free(
+        &mut self,
+        prefix_len: u8,
+        current_depth: u8,
+        current_ip: u32,
+    ) -> Result<u32, IpTrieError> {
+        if self.status == AllocationStatus::Allocated {
+            return Err(IpTrieError::AlreadyAllocated);
+        }
+
+        if self.status == AllocationStatus::Empty {
+            if current_depth == prefix_len {
+                self.status = AllocationStatus::Allocated;
+                return Ok(current_ip);
+            }
+
+            self.status = AllocationStatus::Partial;
+            let res = self.left.get_or_insert_default().allocate_free(
+                prefix_len,
+                current_depth + 1,
+                current_ip,
+            );
+
+            if res.is_ok() {
+                self.coalesce();
+            }
+            return res;
+        }
+
+        let left_alloc = self.left.get_or_insert_default().allocate_free(
+            prefix_len,
+            current_depth + 1,
+            current_ip,
+        );
+
+        if left_alloc.is_ok() {
+            self.coalesce();
+            return left_alloc;
+        }
+
+        let right_alloc = self.right.get_or_insert_default().allocate_free(
+            prefix_len,
+            current_depth + 1,
+            current_ip | (1 << (31 - current_depth)),
+        );
+
+        if right_alloc.is_ok() {
+            self.coalesce();
+            return right_alloc;
+        }
+
+        Err(IpTrieError::AlreadyAllocated)
     }
 
     fn print_recursive(&self, current_ip: u32, depth: u8, prefix: &str) {
@@ -271,6 +329,16 @@ impl IpTrie {
     pub fn is_available(&self, cidr: &str) -> Result<bool, IpTrieError> {
         let (ip_u32, prefix_len) = self.parse_ip(cidr)?;
         Ok(self.root.is_available(ip_u32, prefix_len, 0))
+    }
+
+    pub fn allocate_free(&mut self, prefix_len: u8) -> Result<String, IpTrieError> {
+        match self.root.allocate_free(prefix_len, 0, 0) {
+            Ok(ip) => {
+                let ip_struct = Ipv4Addr::from(ip);
+                Ok(format!("{}/{}", ip_struct, prefix_len))
+            }
+            Err(err) => Err(err),
+        }
     }
 
     pub fn print_tree(&self) {

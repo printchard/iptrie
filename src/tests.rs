@@ -131,3 +131,21 @@ fn test_invalid_cidr_inputs() {
     assert!(trie.allocate("10.0.0.0/33").is_err());
     assert!(trie.allocate("256.0.0.0/24").is_err());
 }
+
+#[test]
+fn test_allocate_free_basic() {
+    let mut trie = IpTrie::new();
+
+    trie.allocate("0.0.0.0/1").unwrap();
+    let allocated = trie.allocate_free(1).unwrap();
+    assert!(allocated == "128.0.0.0/1")
+}
+
+#[test]
+fn test_allocate_free_multiple_children() {
+    let mut trie = IpTrie::new();
+
+    trie.allocate("0.0.0.0/1").unwrap();
+    trie.allocate("128.0.0.0/2").unwrap();
+    assert!(trie.allocate_free(2).unwrap() == "192.0.0.0/2")
+}
