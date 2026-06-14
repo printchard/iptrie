@@ -272,11 +272,18 @@ impl IpNode {
     }
 }
 
+/// `IpTrie` is a binary prefix trie for managing IPv4 CIDR allocations.
+///
+/// It represents the IPv4 address space as a tree of `IpNode` values and
+/// provides a small API to allocate, free, query, and print CIDR blocks.
 pub struct IpTrie {
     pub root: IpNode,
 }
 
 impl IpTrie {
+    /// Create a new, empty `IpTrie`.
+    ///
+    /// The trie starts with a single root node in the `Empty` state.
     pub fn new() -> Self {
         Self {
             root: IpNode::default(),
@@ -316,21 +323,42 @@ impl IpTrie {
         Ok((ip_u32, prefix_len))
     }
 
+    /// Allocate the given CIDR block.
+    ///
+    /// `cidr` must be in standard CIDR notation (for example "10.0.0.0/8").
+    /// On success the specified block becomes `Allocated`. Returns an
+    /// `IpTrieError` if the input is invalid or the block (or overlapping
+    /// sub-blocks/parents) cannot be allocated.
     pub fn allocate(&mut self, cidr: &str) -> Result<(), IpTrieError> {
         let (ip_u32, prefix_len) = self.parse_ip(cidr)?;
         self.root.allocate(ip_u32, prefix_len, 0)
     }
 
+    /// Free the given CIDR block.
+    ///
+    /// The block identified by `cidr` is returned to the `Empty` state.
+    /// Returns an `IpTrieError` if the CIDR is invalid, the block is already
+    /// free, or child ranges prevent freeing the block.
     pub fn free(&mut self, cidr: &str) -> Result<(), IpTrieError> {
         let (ip_u32, prefix_len) = self.parse_ip(cidr)?;
         self.root.free(ip_u32, prefix_len, 0)
     }
 
+    /// Check whether the given CIDR block is available for allocation.
+    ///
+    /// Returns `Ok(true)` when the exact block is free and available, `Ok(false)`
+    /// when any part is already allocated, or an `IpTrieError` for invalid input.
     pub fn is_available(&self, cidr: &str) -> Result<bool, IpTrieError> {
         let (ip_u32, prefix_len) = self.parse_ip(cidr)?;
         Ok(self.root.is_available(ip_u32, prefix_len, 0))
     }
 
+    /// Allocate the first available block with the specified prefix length.
+    ///
+    /// Searches the trie for the first free block of size `prefix_len` and
+    /// allocates it. On success returns the allocated block as a CIDR string
+    /// (for example "10.0.0.0/16"). Returns `IpTrieError::AlreadyAllocated`
+    /// when no suitable block is available.
     pub fn allocate_free(&mut self, prefix_len: u8) -> Result<String, IpTrieError> {
         match self.root.allocate_free(prefix_len, 0, 0) {
             Ok(ip) => {
@@ -341,6 +369,10 @@ impl IpTrie {
         }
     }
 
+    /// Print the trie to stdout for debugging/inspection.
+    ///
+    /// The output shows CIDR blocks and their allocation status in a
+    /// human-readable tree form rooted at `0.0.0.0/0`.
     pub fn print_tree(&self) {
         println!("Root (0.0.0.0/0) [{:?}]", self.root.status);
         self.root.print_recursive(0, 0, "");
